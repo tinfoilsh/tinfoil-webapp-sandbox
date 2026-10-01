@@ -1,0 +1,14 @@
+{
+  "name": "tinfoil-webapp-sandbox",
+  "private": true,
+  "description": "Sandboxed runner for untrusted code previews embedded by Tinfoil Chat",
+  "type": "module",
+  "scripts": {
+    "dev": "node test/serve.mjs",
+    "test": "node test/smoke.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
+  },
+  "engines": { "node": ">=20" }
+}
