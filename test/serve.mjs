@@ -9,7 +9,10 @@ const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const ROOT = path.resolve(process.argv[3] ?? path.join(REPO, 'dist'))
 const PORT = Number(process.argv[2] ?? 3100)
 const vercel = JSON.parse(fs.readFileSync(path.join(REPO, 'vercel.json'), 'utf8'))
-const HEADERS = Object.fromEntries((vercel.headers ?? []).flatMap((h) => h.headers.map((x) => [x.key, x.value])))
+// Vercel semantics, approximately: every block whose `source` matches the path applies, later blocks override.
+const BLOCKS = (vercel.headers ?? []).map((h) => ({ re: new RegExp('^' + h.source.replace(/\(\.\*\)/g, '.*') + '$'), headers: Object.fromEntries(h.headers.map((x) => [x.key, x.value])) }))
+export const headersFor = (pathname) => Object.assign({}, ...BLOCKS.filter((b) => b.re.test(pathname)).map((b) => b.headers))
+const HEADERS = headersFor('/')
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json', '.mjs': 'text/javascript; charset=utf-8', '.wasm': 'application/wasm', '.zip': 'application/zip' }
 
 export function createServer(root = ROOT, headers = HEADERS) {
@@ -18,11 +21,12 @@ export function createServer(root = ROOT, headers = HEADERS) {
     if (p.endsWith('/')) p += 'index.html'
     let file = path.join(root, p)
     if (!fs.existsSync(file) && fs.existsSync(file + '.html')) file += '.html' // cleanUrls
+    const hdrs = headers === HEADERS ? headersFor(p.replace(/\.html$/, '')) : headers
     if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
-      res.writeHead(404, headers).end('not found')
+      res.writeHead(404, hdrs).end('not found')
       return
     }
-    res.writeHead(200, { ...headers, 'content-type': TYPES[path.extname(file)] ?? 'application/octet-stream' })
+    res.writeHead(200, { ...hdrs, 'content-type': TYPES[path.extname(file)] ?? 'application/octet-stream' })
     fs.createReadStream(file).pipe(res)
   })
 }
