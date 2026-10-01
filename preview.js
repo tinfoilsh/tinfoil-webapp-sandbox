@@ -18,6 +18,7 @@
   }
 
   var runner = document.getElementById('runner')
+  var current = null // the run message being displayed
   var PYODIDE = 'https://cdn.jsdelivr.net/pyodide/v0.27.0/full/'
 
   // JSON.stringify plus `<` escaping, so user code can be embedded inside a
@@ -151,6 +152,7 @@
 
   function run(m) {
     if (typeof m.instanceId !== 'string' || !/^[\w:.-]{1,128}$/.test(m.instanceId)) return
+    current = m
     if (m.kind === 'url') {
       // Third-party page. https only; everything else becomes about:blank.
       var url = 'about:blank'
@@ -168,9 +170,14 @@
   }
 
   window.addEventListener('message', function (event) {
-    // From the nested document: relay to the chat unchanged.
+    // From the nested document: relay to the chat, but only messages tagged
+    // with the current run's id, and never from a third-party page (`url`),
+    // so previews cannot speak for each other or for the sandbox.
     if (runner.contentWindow && event.source === runner.contentWindow) {
-      window.parent.postMessage(event.data, '*')
+      var d = event.data
+      if (current && current.kind !== 'url' && d && d.instanceId === current.instanceId) {
+        window.parent.postMessage(d, '*')
+      }
       return
     }
     // From the chat.

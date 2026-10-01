@@ -106,6 +106,17 @@ await check('ignores-foreign-sender', async () => {
   return got.some((m) => m.instanceId === 'j4') ? 'bad: accepted self-posted run' : 'ok'
 })
 
+await check('relay-filtered-by-instance', async () => {
+  await page.evaluate((r) => window.embed('allow-scripts', r), {
+    type: 'tinfoil-sandbox-run', kind: 'artifact', instanceId: 'a2',
+    html: '<script>parent.postMessage({type:"x",instanceId:"someone-else"},"*");parent.postMessage({type:"x",instanceId:"a2"},"*")</script>',
+  })
+  await waitFor(() => window.received.some((m) => m.type === 'x'))
+  await page.waitForTimeout(500)
+  const got = (await page.evaluate(() => window.received)).filter((m) => m.type === 'x')
+  return got.length === 1 && got[0].instanceId === 'a2' ? 'ok (foreign instanceId dropped)' : 'bad ' + JSON.stringify(got)
+})
+
 if (!process.env.SKIP_PYTHON) await check('python', async () => {
   await page.evaluate((r) => window.embed('allow-scripts', r), { type: 'tinfoil-sandbox-run', kind: 'python', instanceId: 'p1', code: 'print("hi")\n1+2' })
   const got = await waitFor(() => window.received.some((m) => m.type === 'python-preview-output'), 90000)
