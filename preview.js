@@ -1,7 +1,8 @@
-// Runner for untrusted previews. The chat embeds /preview in a sandboxed
-// iframe, waits for `tinfoil-sandbox-ready`, then posts one
-// `tinfoil-sandbox-run` message. The code runs in a nested iframe whose
-// document is built here from the same templates the chat used to inline
+// Runner for previews that execute model-authored code (HTML, JavaScript,
+// HTML artifacts), which the chat's own CSP cannot allow. The chat embeds
+// /preview in a sandboxed iframe, waits for `tinfoil-sandbox-ready`, then
+// posts one `tinfoil-sandbox-run` message. The code runs in a nested iframe
+// whose document is built here from the templates the chat used to inline
 // as data: URLs. Messages the nested document posts (heights, console
 // output) are relayed to the chat unchanged.
 //
@@ -19,7 +20,6 @@
 
   var runner = document.getElementById('runner')
   var current = null // the run message being displayed
-  var PYODIDE = location.origin + '/pyodide/' // pinned copy, see build.mjs
 
   // JSON.stringify plus `<` escaping, so user code can be embedded inside a
   // <script> element without terminating it.
@@ -62,49 +62,6 @@
         'if(result!==undefined){output.push("\\u2192 "+(typeof result==="object"?JSON.stringify(result):String(result)))}}' +
         'catch(e){output.push("Error: "+(e.message||String(e)||"Unknown error"))}' +
         'parent.postMessage({type:"js-preview-output",instanceId:' + js(m.instanceId) + ',output},"*");' +
-        '</script></body></html>'
-      )
-    },
-
-    css: function (m) {
-      var report = reporter(
-        'css-preview-height',
-        m.instanceId,
-        'window.addEventListener("load",reportHeight);setTimeout(reportHeight,100);',
-      )
-      return (
-        '<!DOCTYPE html><html><head><meta charset="utf-8">' +
-        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\' \'unsafe-eval\'; style-src \'unsafe-inline\';">' +
-        '<style>' + String(m.code).replace(/<\//g, '<\\/') + '</style>' +
-        report +
-        '</head><body style="margin:0;padding:16px;font-family:system-ui,sans-serif">' +
-        '<h1>Heading 1</h1><h2>Heading 2</h2>' +
-        '<p>This is a <strong>paragraph</strong> with <em>formatted</em> text and a <a href="#">link</a>.</p>' +
-        '<ul><li>List item 1</li><li>List item 2</li></ul>' +
-        '<button>Button</button> <input type="text" placeholder="Input field">' +
-        '<div class="box" style="margin-top:16px;padding:16px;border:1px solid #ccc;border-radius:4px"><p>A div with class "box"</p></div>' +
-        '</body></html>'
-      )
-    },
-
-    python: function (m) {
-      return (
-        '<!DOCTYPE html><html><head><meta charset="utf-8">' +
-        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\' \'unsafe-eval\' ' + location.origin + '; connect-src ' + location.origin + ';">' +
-        '</head><body><script type="module">' +
-        'const id=' + js(m.instanceId) + ';const output=[];' +
-        'parent.postMessage({type:"python-preview-loading",instanceId:id},"*");' +
-        'try{const {loadPyodide}=await import(' + js(PYODIDE + 'pyodide.mjs') + ');' +
-        'const pyodide=await loadPyodide({indexURL:' + js(PYODIDE) + '});' +
-        'pyodide.runPython("import sys\\nfrom io import StringIO\\nsys.stdout=StringIO()\\nsys.stderr=StringIO()");' +
-        'try{const result=pyodide.runPython(' + js(m.code) + ');' +
-        'const stdout=pyodide.runPython("sys.stdout.getvalue()");const stderr=pyodide.runPython("sys.stderr.getvalue()");' +
-        'if(stdout)stdout.split("\\n").filter(l=>l).forEach(l=>output.push(l));' +
-        'if(stderr)stderr.split("\\n").filter(l=>l).forEach(l=>output.push("Error: "+l));' +
-        'if(result!==undefined&&result!==null&&!stdout){const s=String(result);if(s!=="None")output.push("\\u2192 "+s)}}' +
-        'catch(e){output.push("Error: "+(e.message||String(e)||"Unknown error"))}}' +
-        'catch(e){output.push("Error loading Python: "+(e.message||String(e)||"Unknown error"))}' +
-        'parent.postMessage({type:"python-preview-output",instanceId:id,output},"*");' +
         '</script></body></html>'
       )
     },
@@ -153,29 +110,17 @@
   function run(m) {
     if (typeof m.instanceId !== 'string' || !/^[\w:.-]{1,128}$/.test(m.instanceId)) return
     current = m
-    if (m.kind === 'url') {
-      // Third-party page. https only; everything else becomes about:blank.
-      var url = 'about:blank'
-      try {
-        if (new URL(String(m.url)).protocol === 'https:') url = String(m.url)
-      } catch (_) {}
-      runner.removeAttribute('srcdoc')
-      runner.src = url
-      return
-    }
     var build = builders[m.kind]
     if (!build) return
-    runner.removeAttribute('src')
     runner.srcdoc = build(m)
   }
 
   window.addEventListener('message', function (event) {
     // From the nested document: relay to the chat, but only messages tagged
-    // with the current run's id, and never from a third-party page (`url`),
-    // so previews cannot speak for each other or for the sandbox.
+    // with the current run's id, so previews cannot speak for each other.
     if (runner.contentWindow && event.source === runner.contentWindow) {
       var d = event.data
-      if (current && current.kind !== 'url' && d && d.instanceId === current.instanceId) {
+      if (current && d && d.instanceId === current.instanceId) {
         window.parent.postMessage(d, '*')
       }
       return

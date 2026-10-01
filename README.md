@@ -1,13 +1,16 @@
 # tinfoil-webapp-sandbox
 
-Static origin that runs **untrusted, model-generated code previews** for
-[Tinfoil Chat](https://chat.tinfoil.sh) inside sandboxed iframes. Deployed to
+Static origin that runs the **model-generated code previews that execute
+inline code** for [Tinfoil Chat](https://chat.tinfoil.sh) inside sandboxed
+iframes: HTML previews, JavaScript previews and HTML artifacts. Deployed to
 `https://webapp-sandbox.tinfoil.sh`.
 
 It exists so that chat.tinfoil.sh can carry a strict Content-Security-Policy
-(`script-src 'self'` plus hashes, as required for WEBCAT enrollment) while
-previews that need `unsafe-inline`, `unsafe-eval`, Pyodide from a CDN or
-arbitrary third-party pages keep working. Those run here instead.
+(`script-src 'self'` plus hashes, as required for WEBCAT enrollment). Every
+preview whose payload is *data* rather than code (Mermaid, Python via
+Pyodide, CSS, SVG, Markdown, URL artifacts) stays inside the chat origin,
+verified; only the kinds that need `unsafe-inline` / `unsafe-eval` run
+here.
 
 ## Trust model
 
@@ -27,6 +30,14 @@ arbitrary third-party pages keep working. Those run here instead.
 - `frame-ancestors` restricts embedding to the chat origins.
   `Permissions-Policy` denies camera, microphone, geolocation, payment and
   WebAuthn. The chat must never set an `allow=` attribute on the frame.
+
+## What leaves the verified origin
+
+Only the payload of the three kinds below, and only after the user asks for
+it: HTML and JavaScript previews start in code view in the chat, and HTML
+artifacts start in source view. Everything that can be rendered with the
+payload as data stays in the chat origin, so this origin never sees
+diagrams, Python, stylesheets or chat text.
 
 ## Protocol
 
@@ -49,18 +60,13 @@ the frame's origin reads as `"null"`.
 | --- | --- | --- |
 | `html` | `code` | `html-preview-height` |
 | `js` | `code` (module syntax already stripped by the chat) | `js-preview-output` |
-| `css` | `code` | `css-preview-height` |
-| `python` | `code` | `python-preview-loading`, `python-preview-output` |
 | `artifact` | `html` (GenUI HTML artifact; storage shims injected) | none |
-| `url` | `url` (https only, else `about:blank`) | none |
 
 The run message is only accepted from `window.parent`. Messages from the
 nested document are relayed only when they carry the current run's
-`instanceId`, and never for the `url` kind, so a third-party page or a
-previous preview cannot speak for another one. The nested document
+`instanceId`, so a previous preview cannot speak for another one. The nested document
 for each kind is the template the chat used to inline as a `data:` URL,
-including its per-kind `<meta>` CSP (the html/js/css previews cannot reach
-the network; python may fetch only this origin, where a pinned Pyodide lives).
+including its per-kind `<meta>` CSP: none of them can reach the network.
 
 ## Embedding from the chat
 
@@ -85,7 +91,7 @@ window.addEventListener('message', (e) => {
 ```sh
 npm install
 npm run dev     # builds dist/ and serves it on :3100 with the vercel.json headers applied
-npm test        # Playwright smoke test of every kind (SKIP_PYTHON=1 to skip Pyodide)
+npm test        # Playwright smoke test of every kind
 ```
 
 `npx playwright install chromium` once if the browser is missing.
@@ -93,21 +99,15 @@ npm test        # Playwright smoke test of every kind (SKIP_PYTHON=1 to skip Pyo
 ## Deployment
 
 Vercel project linked to this repo: framework **Other**, build command
-`npm run build`, output directory `dist`. The build copies the runner pages
-and the pinned `pyodide` npm package (version in `package.json`) into
-`dist/`; the wasm is never committed. Domain `webapp-sandbox.tinfoil.sh`, DNS-only CNAME in
+`npm run build`, output directory `dist`. Domain `webapp-sandbox.tinfoil.sh`, DNS-only CNAME in
 the Cloudflare zone to the target Vercel shows. Headers live in
 `vercel.json`; `cleanUrls` maps `/preview` to `preview.html`.
-`Access-Control-Allow-Origin: *` is required: previews have an opaque origin,
-so even their imports of `/pyodide/*` from this host are cross-origin fetches.
-
-Update `frame-ancestors` in `vercel.json` when a chat preview domain exists
-or the chat is embedded from another origin.
+`frame-ancestors` allows any `https://*.tinfoil.sh` host plus localhost for
+development.
 
 ## Not here yet
 
-- **MapKit.** The map widget needs Apple's MapKit JS, which the chat CSP
-  will no longer allow. Moving it here is blocked on tokens: the controlplane
-  mints MapKit JWTs bound to the chat origin, and an opaque frame sends
-  `Origin: null`. Either mint origin-less short-lived tokens for the sandbox
-  or give the map frame `allow-same-origin` and bind tokens to this host.
+- **MapKit.** Apple's MapKit JS cannot load under the chat CSP and its
+  tokens are bound to the chat origin; an opaque frame sends `Origin: null`.
+  Needs origin-less short-lived tokens or a decision to give the map frame a
+  real origin.
