@@ -127,6 +127,15 @@ await check('map', async () => {
   return ok ? 'ok (token fetched, 3 pins incl. geocoded + searched, theme updated in place)' : 'bad ' + JSON.stringify({ state, after })
 })
 
+await check('csp-sandbox-directive', async () => {
+  // Opened top-level with no iframe attribute: the header's sandbox directive alone decides.
+  const p2 = await browser.newPage()
+  await p2.goto(`${SANDBOX}/preview`); const previewOrigin = await p2.evaluate(() => window.origin)
+  await p2.goto(`${SANDBOX}/map`); const mapOrigin = await p2.evaluate(() => window.origin)
+  await p2.close()
+  return previewOrigin === 'null' && mapOrigin === SANDBOX ? 'ok (/preview opaque by header, /map keeps its origin)' : 'bad ' + JSON.stringify({ previewOrigin, mapOrigin })
+})
+
 await check('ignores-foreign-sender', async () => {
   await page.evaluate((r) => window.embed('allow-scripts', r), { type: 'tinfoil-sandbox-run', kind: 'js', instanceId: 'j3', code: '"first"' })
   await waitFor(() => window.received.some((m) => m.type === 'js-preview-output'))
