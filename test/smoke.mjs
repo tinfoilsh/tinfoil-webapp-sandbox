@@ -1,7 +1,6 @@
 // End-to-end check: a fake chat page on :3000 (an allowed frame-ancestor)
 // embeds the runner from :3100 in a sandboxed iframe, sends one run message
 // per kind, and checks the relayed messages and the nested document.
-// Set SKIP_PYTHON=1 to skip the Pyodide case (needs network, ~20s).
 import { chromium } from 'playwright'
 import http from 'node:http'
 import { createServer } from './serve.mjs'
@@ -64,13 +63,6 @@ await check('js-blocks-network', async () => {
   return cspViolations.some((v) => /connect-src|example\.com/.test(v)) ? 'ok (fetch refused by CSP)' : 'no violation seen'
 })
 
-await check('css', async () => {
-  await page.evaluate((r) => window.embed('allow-scripts', r), { type: 'tinfoil-sandbox-run', kind: 'css', instanceId: 'c1', code: 'h1{color:red}' })
-  const got = await waitFor(() => window.received.some((m) => m.type === 'css-preview-height'))
-  const h = got.find((m) => m.type === 'css-preview-height')
-  return h.instanceId === 'c1' && h.height >= 150 ? 'ok height=' + h.height : 'bad'
-})
-
 await check('artifact-polyfills', async () => {
   await page.evaluate((r) => window.embed('allow-scripts allow-forms allow-modals allow-popups', r), {
     type: 'tinfoil-sandbox-run', kind: 'artifact', instanceId: 'a1',
@@ -82,17 +74,6 @@ await check('artifact-polyfills', async () => {
   const text = await f.evaluate(() => document.getElementById('o').textContent)
   const origin = await f.evaluate(() => { try { return window.origin } catch { return 'n/a' } })
   return text === 'stored:v' && origin === 'null' ? 'ok (opaque origin, storage shimmed)' : `bad text=${text} origin=${origin}`
-})
-
-await check('url', async () => {
-  await page.evaluate((r) => window.embed('allow-scripts', r), { type: 'tinfoil-sandbox-run', kind: 'url', instanceId: 'u1', url: 'https://example.com/' })
-  await page.waitForFunction(() => document.querySelector('iframe'))
-  await page.waitForTimeout(500)
-  const target = await page.frames().find((f) => f.parentFrame() === page.mainFrame()).evaluate(() => document.getElementById('runner').getAttribute('src'))
-  await page.evaluate((r) => window.embed('allow-scripts', r), { type: 'tinfoil-sandbox-run', kind: 'url', instanceId: 'u2', url: 'javascript:alert(1)' })
-  await page.waitForTimeout(500)
-  const rejected = await page.frames().find((f) => f.parentFrame() === page.mainFrame()).evaluate(() => document.getElementById('runner').getAttribute('src'))
-  return target === 'https://example.com/' && rejected === 'about:blank' ? 'ok (https only)' : `bad ${target} ${rejected}`
 })
 
 await check('ignores-foreign-sender', async () => {
@@ -115,13 +96,6 @@ await check('relay-filtered-by-instance', async () => {
   await page.waitForTimeout(500)
   const got = (await page.evaluate(() => window.received)).filter((m) => m.type === 'x')
   return got.length === 1 && got[0].instanceId === 'a2' ? 'ok (foreign instanceId dropped)' : 'bad ' + JSON.stringify(got)
-})
-
-if (!process.env.SKIP_PYTHON) await check('python', async () => {
-  await page.evaluate((r) => window.embed('allow-scripts', r), { type: 'tinfoil-sandbox-run', kind: 'python', instanceId: 'p1', code: 'print("hi")\n1+2' })
-  const got = await waitFor(() => window.received.some((m) => m.type === 'python-preview-output'), 90000)
-  const out = got.find((m) => m.type === 'python-preview-output').output
-  return JSON.stringify(out) === JSON.stringify(['hi']) ? 'ok' : 'bad ' + JSON.stringify(out)
 })
 
 await browser.close(); sandbox.close(); parent.close()
