@@ -54,7 +54,10 @@ the frame's origin reads as `"null"`.
 | `artifact` | `html` (GenUI HTML artifact; storage shims injected) | none |
 | `url` | `url` (https only, else `about:blank`) | none |
 
-The run message is only accepted from `window.parent`. The nested document
+The run message is only accepted from `window.parent`. Messages from the
+nested document are relayed only when they carry the current run's
+`instanceId`, and never for the `url` kind, so a third-party page or a
+previous preview cannot speak for another one. The nested document
 for each kind is the template the chat used to inline as a `data:` URL,
 including its per-kind `<meta>` CSP (the html/js/css previews cannot reach
 the network; python may load Pyodide from jsDelivr).
