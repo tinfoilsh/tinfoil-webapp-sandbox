@@ -16,9 +16,11 @@ const PARENT_HTML = `<!doctype html><html><body>
     document.querySelector('iframe')?.remove(); window.received = []
     const f = document.createElement('iframe')
     f.setAttribute('sandbox', sandboxAttr)
-    f.src = '${SANDBOX}/preview'
+    const nonce = Math.random().toString(36).slice(2)
+    f.src = '${SANDBOX}/preview#' + nonce
     const onReady = (e) => {
       if (e.source !== f.contentWindow || e.data?.type !== 'tinfoil-sandbox-ready') return
+      if (e.data.nonce !== nonce) { window.badNonce = (window.badNonce || 0) + 1; return }
       window.removeEventListener('message', onReady)
       f.contentWindow.postMessage(run, '*'); resolve(true)
     }
@@ -74,6 +76,16 @@ await check('artifact-polyfills', async () => {
   const text = await f.evaluate(() => document.getElementById('o').textContent)
   const origin = await f.evaluate(() => { try { return window.origin } catch { return 'n/a' } })
   return text === 'stored:v' && origin === 'null' ? 'ok (opaque origin, storage shimmed)' : `bad text=${text} origin=${origin}`
+})
+
+await check('ready-echoes-nonce-and-repeats', async () => {
+  // Attach the listener late: the runner must keep announcing until a run arrives.
+  await page.evaluate(() => { document.querySelector('iframe')?.remove(); window.received = []
+    const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts'); f.src = 'http://localhost:3100/preview#late-nonce'; document.body.appendChild(f) })
+  await page.waitForTimeout(1200)
+  const got = await waitFor(() => window.received.some((m) => m.type === 'tinfoil-sandbox-ready'))
+  const readies = got.filter((m) => m.type === 'tinfoil-sandbox-ready')
+  return readies.length >= 2 && readies.every((m) => m.nonce === 'late-nonce') ? 'ok (' + readies.length + ' announcements, nonce echoed)' : 'bad ' + JSON.stringify(readies.slice(0, 3))
 })
 
 await check('ignores-foreign-sender', async () => {
