@@ -44,8 +44,9 @@ const check = async (name, fn) => { try { results[name] = await fn() } catch (e)
 
 await check('html', async () => {
   await page.evaluate((r) => window.embed('allow-scripts', r), { type: 'tinfoil-sandbox-run', kind: 'html', instanceId: 'h1', code: '<h1 style="height:300px">Hello</h1>' })
-  const got = await waitFor(() => window.received.some((m) => m.type === 'html-preview-height'))
-  const h = got.find((m) => m.type === 'html-preview-height')
+  // The first report can precede layout (height 0); wait for a laid-out one.
+  const got = await waitFor(() => window.received.some((m) => m.type === 'html-preview-height' && m.height > 0))
+  const h = got.filter((m) => m.type === 'html-preview-height' && m.height > 0).at(-1)
   return h.instanceId === 'h1' && h.height >= 300 ? 'ok height=' + h.height : 'bad ' + JSON.stringify(h)
 })
 
