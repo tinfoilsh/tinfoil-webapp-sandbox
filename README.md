@@ -60,7 +60,7 @@ nested document are relayed only when they carry the current run's
 previous preview cannot speak for another one. The nested document
 for each kind is the template the chat used to inline as a `data:` URL,
 including its per-kind `<meta>` CSP (the html/js/css previews cannot reach
-the network; python may load Pyodide from jsDelivr).
+the network; python may fetch only this origin, where a pinned Pyodide lives).
 
 ## Embedding from the chat
 
@@ -84,7 +84,7 @@ window.addEventListener('message', (e) => {
 
 ```sh
 npm install
-npm run dev     # serves the repo on :3100 with the vercel.json headers applied
+npm run dev     # builds dist/ and serves it on :3100 with the vercel.json headers applied
 npm test        # Playwright smoke test of every kind (SKIP_PYTHON=1 to skip Pyodide)
 ```
 
@@ -92,10 +92,14 @@ npm test        # Playwright smoke test of every kind (SKIP_PYTHON=1 to skip Pyo
 
 ## Deployment
 
-Vercel project linked to this repo: framework **Other**, no build command,
-output directory `.`. Domain `webapp-sandbox.tinfoil.sh`, DNS-only CNAME in
+Vercel project linked to this repo: framework **Other**, build command
+`npm run build`, output directory `dist`. The build copies the runner pages
+and the pinned `pyodide` npm package (version in `package.json`) into
+`dist/`; the wasm is never committed. Domain `webapp-sandbox.tinfoil.sh`, DNS-only CNAME in
 the Cloudflare zone to the target Vercel shows. Headers live in
 `vercel.json`; `cleanUrls` maps `/preview` to `preview.html`.
+`Access-Control-Allow-Origin: *` is required: previews have an opaque origin,
+so even their imports of `/pyodide/*` from this host are cross-origin fetches.
 
 Update `frame-ancestors` in `vercel.json` when a chat preview domain exists
 or the chat is embedded from another origin.
@@ -107,5 +111,3 @@ or the chat is embedded from another origin.
   mints MapKit JWTs bound to the chat origin, and an opaque frame sends
   `Origin: null`. Either mint origin-less short-lived tokens for the sandbox
   or give the map frame `allow-same-origin` and bind tokens to this host.
-- **Self-hosted Pyodide.** Currently loaded from jsDelivr; pinning it here
-  would remove the last third-party script origin.

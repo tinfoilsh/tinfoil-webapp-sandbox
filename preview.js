@@ -19,7 +19,7 @@
 
   var runner = document.getElementById('runner')
   var current = null // the run message being displayed
-  var PYODIDE = 'https://cdn.jsdelivr.net/pyodide/v0.27.0/full/'
+  var PYODIDE = location.origin + '/pyodide/' // pinned copy, see build.mjs
 
   // JSON.stringify plus `<` escaping, so user code can be embedded inside a
   // <script> element without terminating it.
@@ -90,7 +90,7 @@
     python: function (m) {
       return (
         '<!DOCTYPE html><html><head><meta charset="utf-8">' +
-        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\' \'unsafe-eval\' https://cdn.jsdelivr.net; connect-src https://cdn.jsdelivr.net;">' +
+        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\' \'unsafe-eval\' ' + location.origin + '; connect-src ' + location.origin + ';">' +
         '</head><body><script type="module">' +
         'const id=' + js(m.instanceId) + ';const output=[];' +
         'parent.postMessage({type:"python-preview-loading",instanceId:id},"*");' +

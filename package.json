@@ -4,11 +4,18 @@
   "description": "Sandboxed runner for untrusted code previews embedded by Tinfoil Chat",
   "type": "module",
   "scripts": {
-    "dev": "node test/serve.mjs",
+    "build": "node build.mjs",
+    "dev": "npm run build && node test/serve.mjs",
+    "pretest": "npm run build",
     "test": "node test/smoke.mjs"
   },
   "devDependencies": {
     "playwright": "^1.63.0"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "pyodide": "0.27.8"
+  }
 }
