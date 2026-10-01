@@ -90,6 +90,29 @@ window.addEventListener('message', (e) => {
 
 `targetOrigin` must be `'*'` because the frame's origin is opaque.
 
+## Map page
+
+`/map` is the one page here that is **not** untrusted code: it is Tinfoil's
+Apple Maps embed for the chat's map widget. The chat frames it with
+`sandbox="allow-scripts allow-same-origin"`, the only same-origin frame in
+this design, because Apple binds MapKit tokens to the page origin and an
+opaque frame sends `Origin: null`. The page loads MapKit JS from Apple's
+CDN, fetches its own token from `https://api.tinfoil.sh/api/mapkit/token`
+(the controlplane must list this origin, and the Vercel preview hostname, in
+the token's `origin` claim), and renders the locations it receives.
+
+| Direction | Message |
+| --- | --- |
+| sandbox → chat | `{ type: 'tinfoil-sandbox-ready', nonce }` as for `/preview` |
+| chat → sandbox | `{ type: 'tinfoil-sandbox-run', kind: 'map', instanceId, locations, mode?, query?, mapType?, isDarkMode? }`; later runs update theme and pins in place |
+| sandbox → chat | `{ type: 'map-preview-status', instanceId, status: 'loading' \| 'ready' \| 'error', message? }` |
+
+Its CSP is path-scoped in `vercel.json`: scripts from this origin and
+`cdn.apple-mapkit.com` only, connections to the token endpoint and Apple's
+services, no inline script, no eval. A compromised MapKit CDN would run with
+this origin rather than an opaque one; the origin holds no data and sets no
+cookies, which is why that trade is acceptable here and nowhere else.
+
 ## Development
 
 ```sh

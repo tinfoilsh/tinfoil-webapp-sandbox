@@ -2,5 +2,5 @@
 import fs from 'node:fs'
 fs.rmSync('dist', { recursive: true, force: true })
 fs.mkdirSync('dist')
-for (const f of ['index.html', 'preview.html', 'preview.js']) fs.copyFileSync(f, `dist/${f}`)
+for (const f of ['index.html', 'preview.html', 'preview.js', 'map.html', 'map.js']) fs.copyFileSync(f, `dist/${f}`)
 console.log('dist/ built')

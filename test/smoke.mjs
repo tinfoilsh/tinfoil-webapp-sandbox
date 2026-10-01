@@ -88,6 +88,45 @@ await check('ready-echoes-nonce-and-repeats', async () => {
   return readies.length >= 2 && readies.every((m) => m.nonce === 'late-nonce') ? 'ok (' + readies.length + ' announcements, nonce echoed)' : 'bad ' + JSON.stringify(readies.slice(0, 3))
 })
 
+// Map page: Apple's CDN and the token endpoint are mocked so the protocol is
+// verified without network. The fake MapKit records what the page does.
+const FAKE_MAPKIT = `(function () { // scoped: a global class named Map would shadow the builtin Playwright itself uses
+  window.__mk = { maps: [], token: null }
+  class Coordinate { constructor(la, lo) { this.latitude = la; this.longitude = lo } }
+  class MarkerAnnotation { constructor(c, o) { this.coordinate = c; this.title = o.title; this.subtitle = o.subtitle } }
+  class Map { constructor(el, o) { this.el = el; this.colorScheme = o.colorScheme; this.annotations = []; window.__mk.maps.push(this) }
+    addAnnotation(a) { this.annotations.push(a) } removeAnnotations(list) { this.annotations = this.annotations.filter((a) => !list.includes(a)) } showItems() {} destroy() {} }
+  Map.ColorSchemes = { Light: 'light', Dark: 'dark', Adaptive: 'adaptive' }
+  Map.MapTypes = { Standard: 'standard', Hybrid: 'hybrid', Satellite: 'satellite', MutedStandard: 'muted' }
+  class Geocoder { lookup(q, cb) { q.includes('Eiffel') ? cb(null, { results: [] }) : cb(null, { results: [{ coordinate: { latitude: 10, longitude: 20 } }] }) } }
+  class Search { search(q, cb) { cb(null, { places: [{ coordinate: { latitude: 48.86, longitude: 2.29 } }] }) } }
+  window.mapkit = { init(o) { o.authorizationCallback((t) => { window.__mk.token = t }) }, Map, Coordinate, MarkerAnnotation, Geocoder, Search }
+  window[document.currentScript.dataset.callback]()
+})()`
+await page.route('https://cdn.apple-mapkit.com/**', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'text/javascript', 'access-control-allow-origin': '*' }, body: FAKE_MAPKIT }))
+await page.route('https://api.tinfoil.sh/api/mapkit/token', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' }, body: JSON.stringify({ token: 'test-token', expiresAt: 0 }) }))
+
+await check('map', async () => {
+  await page.evaluate(() => { document.querySelector('iframe')?.remove(); window.received = [] })
+  await page.evaluate((SANDBOX) => new Promise((resolve) => {
+    const f = document.createElement('iframe'); f.name = 'map'; f.setAttribute('sandbox', 'allow-scripts allow-same-origin'); f.src = SANDBOX + '/map#map-nonce'
+    const run = { type: 'tinfoil-sandbox-run', kind: 'map', instanceId: 'map1', isDarkMode: false, mapType: 'standard',
+      locations: [{ name: 'Office', latitude: 1, longitude: 2 }, { name: 'Paris', address: '1 Rue de Paris' }, { name: 'Eiffel Tower' }] }
+    let posted = false
+    window.addEventListener('message', (e) => { if (!posted && e.source === f.contentWindow && e.data?.type === 'tinfoil-sandbox-ready' && e.data.nonce === 'map-nonce') { posted = true; f.contentWindow.postMessage(run, '*'); resolve() } })
+    document.body.appendChild(f)
+  }), SANDBOX)
+  const got = await waitFor(() => window.received.some((m) => m.type === 'map-preview-status' && m.status === 'ready'))
+  const f = page.frames().find((x) => x.name() === 'map')
+  const state = await f.evaluate(() => ({ token: window.__mk.token, maps: window.__mk.maps.length, pins: window.__mk.maps[0].annotations.map((a) => a.title), scheme: window.__mk.maps[0].colorScheme, origin: window.origin }))
+  // second run: theme flip, same pins -> no rebuild, scheme updated
+  await page.evaluate(() => { const f = document.querySelector('iframe[name=map]'); f.contentWindow.postMessage({ type: 'tinfoil-sandbox-run', kind: 'map', instanceId: 'map1', isDarkMode: true, mapType: 'standard', locations: [{ name: 'Office', latitude: 1, longitude: 2 }, { name: 'Paris', address: '1 Rue de Paris' }, { name: 'Eiffel Tower' }] }, '*') })
+  await page.waitForTimeout(400)
+  const after = await f.evaluate(() => ({ scheme: window.__mk.maps[0].colorScheme, maps: window.__mk.maps.length }))
+  const ok = state.token === 'test-token' && state.maps === 1 && state.pins.length === 3 && state.scheme === 'light' && after.scheme === 'dark' && after.maps === 1 && state.origin === 'http://localhost:3100'
+  return ok ? 'ok (token fetched, 3 pins incl. geocoded + searched, theme updated in place)' : 'bad ' + JSON.stringify({ state, after })
+})
+
 await check('ignores-foreign-sender', async () => {
   await page.evaluate((r) => window.embed('allow-scripts', r), { type: 'tinfoil-sandbox-run', kind: 'js', instanceId: 'j3', code: '"first"' })
   await waitFor(() => window.received.some((m) => m.type === 'js-preview-output'))
