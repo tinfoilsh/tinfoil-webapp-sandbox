@@ -27,6 +27,10 @@ here.
   storage. The remaining difference from a separate site is that Firefox
   places same-site frames in the same content process. This is a recorded
   decision, not an oversight.
+- The CSP header itself carries `sandbox allow-scripts` for every page but
+  `/map`, so the opaque origin does not depend on the embedder setting the
+  iframe attribute (the chat sets it too; the flags intersect). `/map` declares
+  `allow-same-origin` for the token binding described below.
 - `frame-ancestors` restricts embedding to the chat origins.
   `Permissions-Policy` denies camera, microphone, geolocation, payment and
   WebAuthn. The chat must never set an `allow=` attribute on the frame.
