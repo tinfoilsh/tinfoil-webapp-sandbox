@@ -1,0 +1,108 @@
+// End-to-end: chat export on :3000 (allowed frame-ancestor) with a strict
+// WEBCAT-style CSP + sandbox dist on :3100. Drives each preview kind from the
+// real chat UI by rendering CodeBlock-equivalent markup through the message
+// renderer is heavy, so instead we mount the built chat page and inject the
+// preview components' frames the way the app does: by loading the static
+// chat and evaluating the same iframe + handshake behaviour via the app's
+// own compiled code is not exposed. We therefore test at the HTTP + frame
+// level: the in-origin runner documents work under the chat's CSP, and the
+// sandbox frame is embeddable from the chat origin and answers the handshake.
+import { chromium, firefox } from 'playwright'
+import fs from 'node:fs'
+import path from 'node:path'
+import crypto from 'node:crypto'
+import { createServer as createSandboxServer } from '/Users/g/tinfoil/tinfoil-webapp-sandbox/test/serve.mjs'
+
+const CHAT_OUT = process.argv[2]
+const SANDBOX_DIST = process.argv[3]
+const engine = process.argv[4] === 'firefox' ? firefox : chromium
+const CHAT = 'http://localhost:3000'
+const SANDBOX = process.env.LIVE_SANDBOX || 'http://localhost:3100'
+
+const hashes = [...fs.readFileSync(path.join(CHAT_OUT, 'index.html'), 'utf8').matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)]
+  .filter((m) => !m[1].includes('src=') && !m[1].includes('application/json') && m[2].trim())
+  .map((m) => `'sha256-${crypto.createHash('sha256').update(m[2], 'utf8').digest('base64')}'`)
+// The target WEBCAT CSP for the chat: no inline, no eval, wasm allowed, sandbox framed.
+const VERCEL_CSP = process.env.USE_VERCEL_CSP ? JSON.parse(fs.readFileSync(path.join(CHAT_OUT, '..', 'vercel.json'), 'utf8')).headers[0].headers.find((h) => h.key === 'Content-Security-Policy').value.replace(/frame-src ([^;]*)/, (m, v) => `frame-src ${v} ${SANDBOX}`) : null
+const STYLE_SRC = process.env.NO_INLINE_STYLES ? "style-src 'self'" : "style-src 'self' 'unsafe-inline'"
+const CHAT_CSP = VERCEL_CSP || `default-src 'self'; script-src 'self' 'wasm-unsafe-eval' ${hashes.join(' ')}; object-src 'none'; worker-src 'self'; frame-src 'self' data: ${SANDBOX}; ${STYLE_SRC}; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://*.tinfoil.sh; base-uri 'self'; form-action 'self'`
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm', '.zip': 'application/zip', '.woff2': 'font/woff2' }
+
+import http from 'node:http'
+const chatServer = http.createServer((req, res) => {
+  let p = decodeURIComponent(new URL(req.url, CHAT).pathname)
+  if (p === '/') p = '/index.html'
+  let f = path.join(CHAT_OUT, p)
+  if (!fs.existsSync(f) && fs.existsSync(f + '.html')) f += '.html'
+  if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(CHAT_OUT, '[...slug].html')
+  if (!fs.existsSync(f)) f = path.join(CHAT_OUT, '404.html')
+  const cors = /^\/(preview|vendor)\//.test(p) ? { 'access-control-allow-origin': '*' } : {}
+  res.writeHead(200, { 'content-type': TYPES[path.extname(f)] ?? 'application/octet-stream', 'content-security-policy': CHAT_CSP, 'origin-agent-cluster': '?1', ...cors })
+  fs.createReadStream(f).pipe(res)
+}).listen(3000)
+const sandboxServer = process.env.LIVE_SANDBOX ? { close() {} } : createSandboxServer(SANDBOX_DIST).listen(3100)
+
+const browser = await engine.launch()
+const page = await browser.newPage()
+const violations = [], errors = [], allErrors = []
+page.on('console', (m) => { const t = m.text(); if (/Content.Security.Policy|Refused to|violates|CORS|Failed to fetch/.test(t) && !/worker-src/.test(t)) violations.push(t.slice(0, 160)); })
+page.on('pageerror', (e) => errors.push(String(e).split('\n')[0]))
+page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') allErrors.push(m.text().slice(0, 220)) })
+await page.goto(`${CHAT}/`, { waitUntil: 'load' })
+
+// Mount the runner frames exactly as the app's components build them.
+const results = {}
+const run = async (name, fn) => { try { results[name] = await fn() } catch (e) { results[name] = 'FAIL: ' + String(e).split('\n')[0].slice(0, 1200) } }
+const nestedOf = async (name) => { for (let i = 0; i < 100; i++) { const f = page.frames().find((f) => f.name() === name); if (f) return f; await page.waitForTimeout(100) } throw new Error('no frame ' + name) }
+
+const inOrigin = (script, data, extra = {}) => page.evaluate(({ script, data, extra }) => {
+  const origin = location.origin
+  const csp = ["default-src 'none'", `script-src ${origin}${extra.wasm ? " 'wasm-unsafe-eval'" : ''}`, `connect-src ${origin}`, 'img-src data:', 'font-src data:'].filter(Boolean).join('; ')
+  const json = JSON.stringify({ ...data, origin }).replace(/</g, '\\u003c')
+  const doc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp};">${extra.head || ''}</head><body>${extra.body || ''}<script type="application/json" id="data">${json}</script><script type="module" src="${origin}${script}"></script></body></html>`
+  window.received = window.received || []
+  if (!window.__listening) { window.__listening = true; window.addEventListener('message', (e) => window.received.push(e.data)) }
+  const f = document.createElement('iframe'); f.name = data.instanceId; f.setAttribute('sandbox', 'allow-scripts'); f.srcdoc = doc; document.body.appendChild(f)
+}, { script, data, extra })
+const waitMsg = (pred, ms = 60000) => page.waitForFunction(pred, null, { timeout: ms }).then(() => page.evaluate(() => window.received))
+
+await run('mermaid (in-origin, verified CSP)', async () => {
+  await inOrigin('/preview/mermaid-run.js', { code: 'graph TD; A[Start]-->B[End]', isDarkMode: false, instanceId: 'm1' }, { styles: true })
+  const got = await waitMsg(() => window.received.some((m) => m.type === 'mermaid-preview-height' && m.instanceId === 'm1'))
+  const f = await nestedOf('m1')
+  const info = await f.evaluate(() => ({ svg: document.querySelectorAll('svg').length, sheets: document.adoptedStyleSheets.length, styleEls: document.querySelectorAll('style').length,
+    nodeFill: getComputedStyle(document.querySelector('.node rect, .node polygon, .node path') || document.body).fill, svgMaxWidth: document.querySelector('svg')?.style.maxWidth }))
+  return info.svg === 1 && info.sheets >= 2 && info.styleEls === 0 && info.svgMaxWidth ? 'ok height=' + got.find((m) => m.instanceId === 'm1').height + ' ' + JSON.stringify(info) : 'bad ' + JSON.stringify(info)
+})
+await run('python (in-origin, wasm allowlisted-style CSP)', async () => {
+  await inOrigin('/preview/python-run.js', { code: 'print("hi")\n1+2', instanceId: 'p1' }, { wasm: true })
+  const got = await waitMsg(() => window.received.some((m) => m.type === 'python-preview-output' && m.instanceId === 'p1'), 120000)
+  return 'ok output=' + JSON.stringify(got.find((m) => m.type === 'python-preview-output' && m.instanceId === 'p1').output)
+})
+await run('css (in-origin)', async () => {
+  await inOrigin('/preview/css-run.js', { css: 'h1{color:rgb(255, 0, 0)}', instanceId: 'c1' }, { body: '<h1>x</h1>' })
+  const got = await waitMsg(() => window.received.some((m) => m.type === 'css-preview-height' && m.instanceId === 'c1'))
+  const color = await (await nestedOf('c1')).evaluate(() => getComputedStyle(document.querySelector('h1')).color)
+  return color === 'rgb(255, 0, 0)' ? 'ok height=' + got.find((m) => m.instanceId === 'c1').height + ' color applied via CSSOM' : 'bad color ' + color
+})
+await run('html via sandbox (handshake from chat origin)', async () => {
+  await page.evaluate((SANDBOX) => {
+    const f = document.createElement('iframe'); f.name = 'sb'; f.setAttribute('sandbox', 'allow-scripts'); f.src = SANDBOX + '/preview#e2e-nonce'
+    let posted = false
+    window.addEventListener('message', (e) => { if (!posted && e.source === f.contentWindow && e.data?.type === 'tinfoil-sandbox-ready' && e.data.nonce === 'e2e-nonce') { posted = true; f.contentWindow.postMessage({ type: 'tinfoil-sandbox-run', kind: 'html', instanceId: 'h1', code: '<h1 style="height:250px">Sandboxed</h1><script>document.title="ran"</script>' }, '*') } })
+    document.body.appendChild(f)
+  }, SANDBOX)
+  const got = await waitMsg(() => window.received.some((m) => m.type === 'html-preview-height' && m.instanceId === 'h1')).catch(async (e) => {
+    const diag = await page.evaluate(() => ({ received: window.received.slice(-5), frames: [...document.querySelectorAll('iframe')].map((f) => f.name + ':' + (f.src || 'srcdoc')) }))
+    throw new Error('timeout; ' + JSON.stringify(diag))
+  })
+  return 'ok height=' + got.find((m) => m.type === 'html-preview-height' && m.instanceId === 'h1').height
+})
+await run('inline script in chat origin is blocked (CSP sanity)', async () => {
+  await page.evaluate(() => { const s = document.createElement('script'); s.textContent = 'window.__inlineRan = true'; document.body.appendChild(s) })
+  const ran = await page.evaluate(() => Boolean(window.__inlineRan))
+  return ran ? 'FAIL: inline script executed' : 'ok (blocked)'
+})
+
+console.log(JSON.stringify({ results, consoleErrors: allErrors.slice(0, 12), cspViolationsOutsideSanity: violations.filter((v) => !/__inlineRan|inline/.test(v)), pageErrors: errors }, null, 2))
+await browser.close(); chatServer.close(); sandboxServer.close()
