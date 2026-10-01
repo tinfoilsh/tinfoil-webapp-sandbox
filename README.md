@@ -41,8 +41,12 @@ diagrams, Python, stylesheets or chat text.
 
 ## Protocol
 
-The chat loads `https://webapp-sandbox.tinfoil.sh/preview` in a sandboxed
-iframe and waits for a ready message, then posts one run message. Messages
+The chat loads `https://webapp-sandbox.tinfoil.sh/preview#<nonce>` in a
+sandboxed iframe, with a fresh random nonce per frame, and waits for a ready
+message that echoes the nonce, then posts one run message. The nonce proves
+the ready message comes from this document and not from something that
+navigated the frame; repeating the announcement covers a listener attached
+after the first one. Messages
 from the nested preview document (heights, console output) are relayed back
 unchanged, so the chat's existing listeners keep working. The chat
 authenticates relayed messages by `event.source === iframe.contentWindow`;
@@ -50,7 +54,7 @@ the frame's origin reads as `"null"`.
 
 | Direction | Message |
 | --- | --- |
-| sandbox → chat | `{ type: 'tinfoil-sandbox-ready' }` |
+| sandbox → chat | `{ type: 'tinfoil-sandbox-ready', nonce }`, repeated every 250 ms until a run arrives |
 | chat → sandbox | `{ type: 'tinfoil-sandbox-run', kind, instanceId, ... }` |
 | sandbox → chat | whatever the preview posts, e.g. `{ type: 'html-preview-height', instanceId, height }` |
 
@@ -71,14 +75,14 @@ including its per-kind `<meta>` CSP: none of them can reach the network.
 ## Embedding from the chat
 
 ```html
-<iframe src="https://webapp-sandbox.tinfoil.sh/preview"
+<iframe src="https://webapp-sandbox.tinfoil.sh/preview#<nonce>"
         sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe>
 ```
 
 ```js
 window.addEventListener('message', (e) => {
   if (e.source !== iframe.contentWindow) return
-  if (e.data?.type === 'tinfoil-sandbox-ready')
+  if (e.data?.type === 'tinfoil-sandbox-ready' && e.data.nonce === nonce)
     iframe.contentWindow.postMessage({ type: 'tinfoil-sandbox-run', kind: 'js', instanceId, code }, '*')
   // ...existing handlers for js-preview-output etc. unchanged
 })

@@ -132,6 +132,17 @@
     run(m)
   })
 
-  // The chat posts the run message only after this arrives.
-  window.parent.postMessage({ type: 'tinfoil-sandbox-ready' }, '*')
+  // Announce readiness until the first run arrives. The chat passes a
+  // per-frame nonce in the URL fragment and accepts only a ready message
+  // that echoes it, so a document that replaced this one could not claim
+  // the run. Repeating covers a chat listener attached after our first post.
+  var nonce = location.hash.slice(1)
+  var announce = setInterval(function () {
+    window.parent.postMessage({ type: 'tinfoil-sandbox-ready', nonce: nonce }, '*')
+  }, 250)
+  setTimeout(function () { clearInterval(announce) }, 30000)
+  window.addEventListener('message', function (event) {
+    if (event.source === window.parent && event.data && event.data.type === 'tinfoil-sandbox-run') clearInterval(announce)
+  })
+  window.parent.postMessage({ type: 'tinfoil-sandbox-ready', nonce: nonce }, '*')
 })()
