@@ -112,8 +112,9 @@ the token's `origin` claim), and renders the locations it receives.
 | sandbox → chat | `{ type: 'map-preview-status', instanceId, status: 'loading' \| 'ready' \| 'error', message? }` |
 
 Its CSP is path-scoped in `vercel.json`: scripts from this origin and
-`cdn.apple-mapkit.com` only, connections to the token endpoint and Apple's
-services, no inline script, no eval. A compromised MapKit CDN would run with
+`cdn.apple-mapkit.com` only, blob: workers (MapKit spawns its own),
+connections to the token endpoint and Apple's services, no inline script, no
+eval. A compromised MapKit CDN would run with
 this origin rather than an opaque one; the origin holds no data and sets no
 cookies, which is why that trade is acceptable here and nowhere else.
 
