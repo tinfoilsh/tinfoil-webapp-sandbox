@@ -132,6 +132,12 @@
     run(m)
   })
 
+  // The chat focuses this frame for keyboard-driven artifacts; the code runs
+  // one level down, so pass focus on to the nested document.
+  window.addEventListener('focus', function () {
+    if (runner.contentWindow) runner.contentWindow.focus()
+  })
+
   // Announce readiness until the first run arrives. The chat passes a
   // per-frame nonce in the URL fragment and accepts only a ready message
   // that echoes it, so a document that replaced this one could not claim

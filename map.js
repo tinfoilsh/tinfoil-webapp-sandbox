@@ -140,7 +140,9 @@
     CHAT_ORIGIN = event.origin
     var previous = current
     current = m
-    status('loading')
+    // Later runs (theme, pins) update the live map in place; only the first
+    // one has nothing to show yet.
+    if (!map) status('loading')
     loadMapKit().then(function (mk) { if (current === m) render(mk, m, previous) }).catch(function (e) {
       if (current === m) status('error', e && e.message ? e.message : String(e))
     })
