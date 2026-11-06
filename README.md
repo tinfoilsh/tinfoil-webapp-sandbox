@@ -126,7 +126,7 @@ npm run dev     # builds dist/ and serves it on :3100 with the vercel.json heade
 npm test        # Playwright smoke test of every kind
 ```
 
-`npx playwright install chromium` once if the browser is missing.
+`npx playwright install chromium webkit` once if the browsers are missing.
 
 ## Deployment
 
