@@ -59,7 +59,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'none'; script-src 'self' https://tinfoil-webapp-sandbox-tinfoil.vercel.app/preview.js http://localhost:3100/preview.js 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src https: data: blob:; media-src https: data: blob:; font-src https: data:; frame-src https: data:; base-uri 'none'; form-action 'none'; sandbox allow-scripts; frame-ancestors https://*.tinfoil.sh https://*.vercel.app http://localhost:3000"
+          "value": "default-src 'none'; script-src 'self' https://tinfoil-webapp-sandbox-tinfoil.vercel.app/preview.js 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src https: data: blob:; media-src https: data: blob:; font-src https: data:; frame-src https: data:; base-uri 'none'; form-action 'none'; sandbox allow-scripts; frame-ancestors https://*.tinfoil.sh https://*.vercel.app http://localhost:3000"
         }
       ]
     },

@@ -3,9 +3,13 @@
 // per kind, and checks the relayed messages and the nested document.
 import { chromium } from 'playwright'
 import http from 'node:http'
+import fs from 'node:fs'
 import { createServer } from './serve.mjs'
 
 const SANDBOX = 'http://localhost:3100'
+const PREVIEW_ORIGINS = ['https://webapp-sandbox.tinfoil.sh', 'https://tinfoil-webapp-sandbox-tinfoil.vercel.app']
+const VERCEL = JSON.parse(fs.readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'))
+const PREVIEW_HTML = fs.readFileSync(new URL('../dist/preview.html', import.meta.url), 'utf8')
 const PARENT_HTML = `<!doctype html><html><body>
 <script>
   window.received = []
@@ -41,6 +45,30 @@ const waitFor = (pred, ms = 15000) => page.waitForFunction(pred, null, { timeout
 const nested = () => page.frames().find((f) => f.parentFrame()?.parentFrame() === page.mainFrame())
 const results = {}
 const check = async (name, fn) => { try { results[name] = await fn() } catch (e) { results[name] = 'FAIL: ' + String(e).split('\n')[0] } }
+
+for (const origin of PREVIEW_ORIGINS) {
+  await check(`preview-bootstrap-csp ${origin}`, async () => {
+    const condition = origin === PREVIEW_ORIGINS[0] ? 'has' : 'missing'
+    const csp = VERCEL.headers.find((block) => block.source === '/(.*)' && block[condition])
+      .headers.find((header) => header.key === 'Content-Security-Policy').value
+    // A srcdoc frame's 'self' differs from the bootstrap host, exercising
+    // the CSP mismatch that prevents Safari's opaque frame from starting.
+    const metaCsp = csp.split(';').filter((directive) => !/^\s*(sandbox|frame-ancestors)\b/.test(directive)).join(';')
+    const html = PREVIEW_HTML.replace('<head>', `<head><meta http-equiv="Content-Security-Policy" content="${metaCsp}">`)
+      .replace('src="/preview.js"', `src="${origin}/preview.js"`)
+    await page.route(`${origin}/preview.js`, (route) => route.fulfill({ path: new URL('../dist/preview.js', import.meta.url).pathname, contentType: 'text/javascript' }))
+    await page.evaluate((html) => {
+      document.querySelector('iframe')?.remove(); window.received = []
+      const frame = document.createElement('iframe')
+      frame.setAttribute('sandbox', 'allow-scripts')
+      frame.srcdoc = html
+      document.body.appendChild(frame)
+    }, html)
+    const got = await waitFor(() => window.received.some((message) => message.type === 'tinfoil-sandbox-ready'))
+    const ready = got.find((message) => message.type === 'tinfoil-sandbox-ready')
+    return ready.nonce === '' ? 'ok (bootstrap announced readiness)' : 'bad ' + JSON.stringify(ready)
+  })
+}
 
 await check('html', async () => {
   await page.evaluate((r) => window.embed('allow-scripts', r), { type: 'tinfoil-sandbox-run', kind: 'html', instanceId: 'h1', code: '<h1 style="height:300px">Hello</h1>' })
