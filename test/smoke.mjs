@@ -148,6 +148,8 @@ await check('artifact-dynamic-images-and-network-alternatives', async () => {
     type: 'tinfoil-sandbox-run', kind: 'artifact', instanceId: 'dynamic-images',
     html: '<div style="width:20px;height:20px;background-image:url(https://alternate-leak.example/background.png)"></div>' +
       '<iframe src="https://alternate-leak.example/frame"></iframe>' +
+      '<iframe srcdoc="&lt;img src=&quot;https://alternate-leak.example/child.png&quot;&gt;"></iframe>' +
+      '<iframe src="data:text/html,%3Cimg%20src%3D%22https%3A%2F%2Falternate-leak.example%2Fdata.png%22%3E"></iframe>' +
       '<video src="https://alternate-leak.example/movie" preload="auto"></video>' +
       '<script>const image=new Image();image.id="dynamic";image.src="https://alternate-leak.example/image.png";document.body.append(image);' +
       'const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");const vector=document.createElementNS(svg.namespaceURI,"image");vector.id="dynamic-vector";svg.append(vector);document.body.append(svg);' +
