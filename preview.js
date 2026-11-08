@@ -21,6 +21,69 @@
   var runner = document.getElementById('runner')
   var current = null // the run message being displayed
 
+  function imageBridge(instanceId) {
+    var MAX_IMAGES = 64
+    var sources = new Map()
+    var replies = new Map()
+    var currentSources = new WeakMap()
+    var nextId = 0
+    var selectors = 'img, image, video[poster], input[type="image"], picture source'
+
+    window.addEventListener('message', function (event) {
+      var message = event.data
+      if (event.source !== parent || !message || message.type !== 'tinfoil-sandbox-image' || message.instanceId !== instanceId) return
+      var resolve = replies.get(message.requestId)
+      if (!resolve) return
+      replies.delete(message.requestId)
+      var source = message.dataURL
+      resolve(typeof source === 'string' && /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(source) ? source : null)
+    })
+
+    function fetchImage(url) {
+      if (sources.has(url)) return sources.get(url)
+      if (sources.size >= MAX_IMAGES) return Promise.resolve(null)
+      var requestId = String(++nextId)
+      var request = new Promise(function (resolve) {
+        replies.set(requestId, resolve)
+        parent.postMessage({ type: 'tinfoil-sandbox-image-request', instanceId: instanceId, requestId: requestId, url: url }, '*')
+      })
+      sources.set(url, request)
+      return request
+    }
+
+    function rewrite(element) {
+      if (element.hasAttribute('srcset')) element.removeAttribute('srcset')
+      if (element.localName === 'source') return
+      var attribute = element.localName === 'video' ? 'poster' : element.localName === 'image' ? 'href' : 'src'
+      var source = element.getAttribute(attribute) || (element.localName === 'image' ? element.getAttribute('xlink:href') : null)
+      if (!source || /^(data:|blob:)/i.test(source)) return
+      if (element.localName === 'image') element.removeAttribute('xlink:href')
+      element.removeAttribute(attribute)
+      currentSources.set(element, source)
+      fetchImage(source).then(function (dataURL) {
+        if (dataURL && currentSources.get(element) === source && !element.hasAttribute(attribute)) element.setAttribute(attribute, dataURL)
+      })
+    }
+
+    function visit(node) {
+      if (node.nodeType !== Node.ELEMENT_NODE) return
+      if (node.matches(selectors)) rewrite(node)
+      node.querySelectorAll(selectors).forEach(rewrite)
+    }
+
+    new MutationObserver(function (changes) {
+      changes.forEach(function (change) {
+        if (change.type === 'attributes') visit(change.target)
+        else change.addedNodes.forEach(visit)
+      })
+    }).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['src', 'srcset', 'href', 'xlink:href', 'poster'] })
+    visit(document.documentElement)
+  }
+
+  function imageScript(id) {
+    return '<script>(' + imageBridge.toString() + ')(' + js(id) + ');</script>'
+  }
+
   // JSON.stringify plus `<` escaping, so user code can be embedded inside a
   // <script> element without terminating it.
   function js(value) {
@@ -45,10 +108,10 @@
       var report = reporter(
         'html-preview-height',
         m.instanceId,
-        'window.addEventListener("load",reportHeight);window.addEventListener("resize",reportHeight);' +
+        'window.addEventListener("load",reportHeight);document.addEventListener("load",reportHeight,true);window.addEventListener("resize",reportHeight);' +
           'new MutationObserver(reportHeight).observe(document.body,{childList:true,subtree:true});setTimeout(reportHeight,100);',
       )
-      return '<!DOCTYPE html><html><head>' + csp + '</head><body>' + m.code + report + '</body></html>'
+      return '<!DOCTYPE html><html><head>' + csp + imageScript(m.instanceId) + '</head><body>' + m.code + report + '</body></html>'
     },
 
     js: function (m) {
@@ -69,7 +132,7 @@
     // GenUI HTML artifact: model-authored document with storage shims, since
     // an opaque origin makes localStorage / document.cookie throw.
     artifact: function (m) {
-      return injectArtifactPolyfills(String(m.html))
+      return injectArtifactPolyfills(String(m.html), imageScript(m.instanceId))
     },
   }
 
@@ -87,8 +150,9 @@
   // Same insertion rules as the chat's injectArtifactPolyfills: before the
   // first <script> in <head>, else before </head>, else after <body>, else
   // prepended.
-  function injectArtifactPolyfills(html) {
+  function injectArtifactPolyfills(html, images) {
     if (!html) return html
+    var additions = POLYFILL + images
     var headOpen = html.match(/<head[^>]*>/i)
     var headClose = html.match(/<\/head\s*>/i)
     if (headOpen && headClose) {
@@ -96,15 +160,15 @@
       var headContent = html.slice(headStart, headClose.index)
       var firstScript = headContent.match(/<script\b/i)
       var at = firstScript ? headStart + firstScript.index : headClose.index
-      return html.slice(0, at) + POLYFILL + html.slice(at)
+      return html.slice(0, at) + additions + html.slice(at)
     }
-    if (headClose) return html.slice(0, headClose.index) + POLYFILL + html.slice(headClose.index)
+    if (headClose) return html.slice(0, headClose.index) + additions + html.slice(headClose.index)
     var bodyOpen = html.match(/<body[^>]*>/i)
     if (bodyOpen) {
       var after = bodyOpen.index + bodyOpen[0].length
-      return html.slice(0, after) + POLYFILL + html.slice(after)
+      return html.slice(0, after) + additions + html.slice(after)
     }
-    return POLYFILL + html
+    return additions + html
   }
 
   function run(m) {
@@ -128,6 +192,10 @@
     // From the chat.
     if (event.source !== window.parent) return
     var m = event.data
+    if (m && m.type === 'tinfoil-sandbox-image' && current && m.instanceId === current.instanceId) {
+      runner.contentWindow.postMessage(m, '*')
+      return
+    }
     if (!m || m.type !== 'tinfoil-sandbox-run') return
     run(m)
   })

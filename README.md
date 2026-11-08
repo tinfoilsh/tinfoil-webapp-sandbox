@@ -61,6 +61,8 @@ the frame's origin reads as `"null"`.
 | sandbox → chat | `{ type: 'tinfoil-sandbox-ready', nonce }`, repeated every 250 ms until a run arrives |
 | chat → sandbox | `{ type: 'tinfoil-sandbox-run', kind, instanceId, ... }` |
 | sandbox → chat | whatever the preview posts, e.g. `{ type: 'html-preview-height', instanceId, height }` |
+| sandbox → chat | `{ type: 'tinfoil-sandbox-image-request', instanceId, requestId, url }` |
+| chat → sandbox | `{ type: 'tinfoil-sandbox-image', instanceId, requestId, dataURL }`, with PNG bytes fetched through the attested harness, or `null` on failure |
 
 `kind` and its payload:
 
@@ -75,6 +77,10 @@ nested document are relayed only when they carry the current run's
 `instanceId`, so a previous preview cannot speak for another one. The nested document
 for each kind is the template the chat used to inline as a `data:` URL,
 including its per-kind `<meta>` CSP: none of them can reach the network.
+
+HTML image elements request bytes from the chat rather than contacting their
+hosts. Direct network images, fonts, media, and nested frames are blocked;
+unsupported image references remain unavailable instead of loading directly.
 
 ## Embedding from the chat
 
