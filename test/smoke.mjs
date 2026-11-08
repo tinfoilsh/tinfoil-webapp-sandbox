@@ -149,11 +149,14 @@ await check('artifact-dynamic-images-and-network-alternatives', async () => {
     html: '<div style="width:20px;height:20px;background-image:url(https://alternate-leak.example/background.png)"></div>' +
       '<iframe src="https://alternate-leak.example/frame"></iframe>' +
       '<video src="https://alternate-leak.example/movie" preload="auto"></video>' +
-      '<script>const image=new Image();image.id="dynamic";image.src="https://alternate-leak.example/image.png";document.body.append(image)</script>',
+      '<script>const image=new Image();image.id="dynamic";image.src="https://alternate-leak.example/image.png";document.body.append(image);' +
+      'const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");const vector=document.createElementNS(svg.namespaceURI,"image");vector.id="dynamic-vector";svg.append(vector);document.body.append(svg);' +
+      'queueMicrotask(()=>vector.setAttributeNS("http://www.w3.org/1999/xlink","alternate:href","https://alternate-leak.example/vector.png"));</script>',
   })
   await waitFor(() => window.received.some((m) => m.type === 'tinfoil-sandbox-image-request'))
   const frame = nested()
   await frame.waitForFunction(() => document.getElementById('dynamic')?.naturalWidth === 2)
+  await frame.waitForFunction(() => document.getElementById('dynamic-vector')?.getAttribute('href')?.startsWith('data:image/png;base64,'))
   await frame.waitForLoadState('networkidle')
   return directRequests === 0 ? 'ok (dynamic image proxied and alternate network loads blocked)' : 'bad direct requests=' + directRequests
 })

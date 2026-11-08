@@ -28,6 +28,8 @@
     var currentSources = new WeakMap()
     var nextId = 0
     var selectors = 'img, image, video[poster], input[type="image"], picture source'
+    var xlinkNamespace = 'http://www.w3.org/1999/xlink'
+    var attributes = new Set(['src', 'srcset', 'href', 'poster', 'type'])
 
     window.addEventListener('message', function (event) {
       var message = event.data
@@ -55,9 +57,9 @@
       if (element.hasAttribute('srcset')) element.removeAttribute('srcset')
       if (element.localName === 'source') return
       var attribute = element.localName === 'video' ? 'poster' : element.localName === 'image' ? 'href' : 'src'
-      var source = element.getAttribute(attribute) || (element.localName === 'image' ? element.getAttribute('xlink:href') : null)
+      var source = element.getAttribute(attribute) || (element.localName === 'image' ? element.getAttributeNS(xlinkNamespace, 'href') : null)
       if (!source || /^(data:|blob:)/i.test(source)) return
-      if (element.localName === 'image') element.removeAttribute('xlink:href')
+      if (element.localName === 'image') element.removeAttributeNS(xlinkNamespace, 'href')
       element.removeAttribute(attribute)
       currentSources.set(element, source)
       fetchImage(source).then(function (dataURL) {
@@ -73,10 +75,12 @@
 
     new MutationObserver(function (changes) {
       changes.forEach(function (change) {
-        if (change.type === 'attributes') visit(change.target)
+        if (change.type === 'attributes') {
+          if (attributes.has(change.attributeName)) visit(change.target)
+        }
         else change.addedNodes.forEach(visit)
       })
-    }).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['src', 'srcset', 'href', 'xlink:href', 'poster'] })
+    }).observe(document.documentElement, { subtree: true, childList: true, attributes: true })
     visit(document.documentElement)
   }
 
