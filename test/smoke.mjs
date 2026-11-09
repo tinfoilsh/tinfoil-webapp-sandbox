@@ -15,6 +15,9 @@ const PARENT_HTML = `<!doctype html><html><body>
   window.received = []
   window.addEventListener('message', (e) => {
     if (e.source === document.querySelector('iframe')?.contentWindow) window.received.push(e.data)
+    if (e.source === document.querySelector('iframe')?.contentWindow && e.data?.type === 'tinfoil-sandbox-image-request' && window.imageReplyData) {
+      e.source.postMessage({type: 'tinfoil-sandbox-image', instanceId: e.data.instanceId, requestId: e.data.requestId, dataURL: window.imageReplyData}, '*')
+    }
   })
   window.embed = (sandboxAttr, run) => new Promise((resolve) => {
     document.querySelector('iframe')?.remove(); window.received = []
@@ -105,6 +108,59 @@ await check('artifact-polyfills', async () => {
   const text = await f.evaluate(() => document.getElementById('o').textContent)
   const origin = await f.evaluate(() => { try { return window.origin } catch { return 'n/a' } })
   return text === 'stored:v' && origin === 'null' ? 'ok (opaque origin, storage shimmed)' : `bad text=${text} origin=${origin}`
+})
+
+await check('artifact-images-use-parent-bytes-without-network', async () => {
+  let directRequests = 0
+  const dataURL = await page.evaluate(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 2; canvas.height = 3
+    canvas.getContext('2d').fillRect(0, 0, 2, 3)
+    return window.imageReplyData = canvas.toDataURL()
+  })
+  await page.route('https://image-leak.example/**', async (route) => {
+    directRequests++
+    await route.fulfill({body: Buffer.from(dataURL.split(',')[1], 'base64'), contentType: 'image/png'})
+  })
+  await page.evaluate((run) => window.embed('allow-scripts', run), {
+    type: 'tinfoil-sandbox-run', kind: 'artifact', instanceId: 'private-images',
+    html: '<img id="photo" src="https://image-leak.example/photo.png" srcset="https://image-leak.example/large.png 2x">' +
+      '<svg xmlns="http://www.w3.org/2000/svg"><image id="vector" xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="https://image-leak.example/photo.png" width="2" height="3"/></svg>',
+  })
+  await waitFor(() => window.received.some((m) => m.type === 'tinfoil-sandbox-image-request'))
+  const frame = nested()
+  await frame.waitForFunction(() => document.getElementById('photo')?.naturalWidth === 2)
+  const source = await frame.evaluate(() => document.getElementById('photo').getAttribute('src'))
+  const vectorSource = await frame.evaluate(() => document.getElementById('vector').getAttribute('href'))
+  const requests = (await page.evaluate(() => window.received)).filter((m) => m.type === 'tinfoil-sandbox-image-request')
+  return directRequests === 0 && source === dataURL && vectorSource === dataURL && requests.length === 1 && requests[0].url === 'https://image-leak.example/photo.png'
+    ? 'ok (image rendered from parent bytes with no direct request)'
+    : 'bad ' + JSON.stringify({directRequests, source, requests})
+})
+
+await check('artifact-dynamic-images-and-network-alternatives', async () => {
+  let directRequests = 0
+  await page.route('https://alternate-leak.example/**', async (route) => {
+    directRequests++
+    await route.fulfill({body: '', status: 200})
+  })
+  await page.evaluate((run) => window.embed('allow-scripts', run), {
+    type: 'tinfoil-sandbox-run', kind: 'artifact', instanceId: 'dynamic-images',
+    html: '<div style="width:20px;height:20px;background-image:url(https://alternate-leak.example/background.png)"></div>' +
+      '<iframe src="https://alternate-leak.example/frame"></iframe>' +
+      '<iframe srcdoc="&lt;img src=&quot;https://alternate-leak.example/child.png&quot;&gt;"></iframe>' +
+      '<iframe src="data:text/html,%3Cimg%20src%3D%22https%3A%2F%2Falternate-leak.example%2Fdata.png%22%3E"></iframe>' +
+      '<video src="https://alternate-leak.example/movie" preload="auto"></video>' +
+      '<script>const image=new Image();image.id="dynamic";image.src="https://alternate-leak.example/image.png";document.body.append(image);' +
+      'const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");const vector=document.createElementNS(svg.namespaceURI,"image");vector.id="dynamic-vector";svg.append(vector);document.body.append(svg);' +
+      'queueMicrotask(()=>vector.setAttributeNS("http://www.w3.org/1999/xlink","alternate:href","https://alternate-leak.example/vector.png"));</script>',
+  })
+  await waitFor(() => window.received.some((m) => m.type === 'tinfoil-sandbox-image-request'))
+  const frame = nested()
+  await frame.waitForFunction(() => document.getElementById('dynamic')?.naturalWidth === 2)
+  await frame.waitForFunction(() => document.getElementById('dynamic-vector')?.getAttribute('href')?.startsWith('data:image/png;base64,'))
+  await frame.waitForLoadState('networkidle')
+  return directRequests === 0 ? 'ok (dynamic image proxied and alternate network loads blocked)' : 'bad direct requests=' + directRequests
 })
 
 await check('ready-echoes-nonce-and-repeats', async () => {
